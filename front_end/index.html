@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zen8labs</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 6px;
+      }
+      th {
+        background-color: #f4f4f4;
+      }
+      button {
+        margin: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      style="display: flex; justify-content: space-between; align-items: center"
+    >
+      <img src="./logo/logo.png" alt="Logo" />
+      <h1 style="color: #2c3e50; display: flex; align-self: center">
+        Employee Management
+      </h1>
+      <div></div>
+    </div>
+
+    <form
+      id="add-employee-form"
+      style="background-color: #ecf0f1; padding: 20px; border-radius: 5px"
+    >
+      <label for="emp_id" style="color: #34495e">Employee ID:</label>
+      <input
+        type="number"
+        id="emp_id"
+        required
+        style="margin-bottom: 10px"
+      /><br />
+      <label for="name" style="color: #34495e">Name:</label>
+      <input type="text" id="name" required style="margin-bottom: 10px" /><br />
+      <label for="age" style="color: #34495e">Age:</label>
+      <input
+        type="number"
+        id="age"
+        required
+        style="margin-bottom: 10px"
+      /><br />
+      <label for="position" style="color: #34495e">Position:</label>
+      <input
+        type="text"
+        id="position"
+        required
+        style="margin-bottom: 10px"
+      /><br />
+      <label for="salary" style="color: #34495e">Salary:</label>
+      <input
+        type="number"
+        id="salary"
+        step="0.01"
+        required
+        style="margin-bottom: 10px"
+      /><br />
+      <button
+        type="submit"
+        style="
+          background-color: #27ae60;
+          color: white;
+          border: none;
+          padding: 10px 20px;
+          border-radius: 5px;
+        "
+      >
+        Add Employee
+      </button>
+    </form>
+
+    <h2 style="color: #2980b9">Employee List</h2>
+    <button
+      onclick="loadEmployees()"
+      style="
+        background-color: #e67e22;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 5px;
+      "
+    >
+      Refresh List
+    </button>
+    <a
+      href="http://127.0.0.1:8000/employees/export/excel/"
+      download="employees.xlsx"
+    >
+      <div
+        style="
+          padding: 10px 20px;
+          background-color: #4caf50;
+          color: white;
+          width: 100px;
+          text-align: center;
+          cursor: pointer;
+        "
+      >
+        Download
+      </div>
+    </a>
+
+    <table
+      id="employee-table"
+      style="width: 100%; border-collapse: collapse; margin-top: 20px"
+    >
+      <thead>
+        <tr style="background-color: #1f149a; color: rgb(24, 123, 82)">
+          <th>ID</th>
+          <th>Name</th>
+          <th>Age</th>
+          <th>Position</th>
+          <th>Salary</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <script>
+      const baseUrl = "http://127.0.0.1:8000/employees";
+
+      document
+        .getElementById("add-employee-form")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const emp_id = document.getElementById("emp_id").value;
+          const name = document.getElementById("name").value;
+          const age = document.getElementById("age").value;
+          const position = document.getElementById("position").value;
+          const salary = document.getElementById("salary").value;
+
+          const response = await fetch(baseUrl + "/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ emp_id, name, age, position, salary }),
+          });
+
+          const result = await response.json();
+          alert(result.message);
+          loadEmployees();
+        });
+
+      async function loadEmployees() {
+        const response = await fetch(baseUrl + "/");
+        const employees = await response.json();
+        const tableBody = document.querySelector("#employee-table tbody");
+        const updateBtn = document.querySelector("#update-button");
+        let updatedEmployee = {};
+        tableBody.innerHTML = "";
+
+        for (const id in employees) {
+          const employee = employees[id];
+          const row = `
+                    <tr>
+                        <td>${employee.emp_id}</td>
+                        <td>${employee.name}</td>
+                        <td>${employee.age}</td>
+                        <td>${employee.position}</td>
+                        <td>${employee.salary}</td>
+                        <td>
+                            <button id="update-button" onclick="UpdateEmployee(${employee.emp_id})">Update</button>
+                            <button onclick="deleteEmployee(${employee.emp_id})">Delete</button>
+                        </td>
+                        
+                    </tr>
+                `;
+          tableBody.innerHTML += row;
+        }
+      }
+
+      async function deleteEmployee(emp_id) {
+        const response = await fetch(`${baseUrl}/${emp_id}`, {
+          method: "DELETE",
+        });
+
+        const result = await response.json();
+        alert(result.message);
+        loadEmployees();
+      }
+      async function UpdateEmployee(emp_id) {
+        const response = await fetch(`${baseUrl}/${emp_id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updatedEmployee),
+        });
+
+        const result = await response.json();
+        alert(result.message);
+        loadEmployees();
+      }
+
+      async function search(emp_id) {
+        const response = await fetch(
+          `${baseUrl}/search/?query=${searchQuery}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(updatedEmployee),
+          }
+        );
+
+        const result = await response.json();
+      }
+
+      window.onload = loadEmployees;
+    </script>
+  </body>
+</html>
