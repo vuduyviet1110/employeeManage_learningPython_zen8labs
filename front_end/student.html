@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Student Management</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+      }
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 10px;
+        text-align: center;
+      }
+      th {
+        background-color: #afadbf;
+        color: rgb(3, 33, 21);
+      }
+      button {
+        padding: 5px 10px;
+        margin: 2px;
+        cursor: pointer;
+      }
+      .update-button {
+        background-color: #4caf50;
+        color: white;
+      }
+      .delete-button {
+        background-color: #f44336;
+        color: white;
+      }
+    </style>
+  </head>
+  <body>
+    <div>
+      <div
+        style="
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        "
+      >
+        <div>
+          <img src="./logo/logo.png" alt="Logo" />
+          <button onclick="loadStudents()">Refresh List</button>
+          <button onclick="deleteStudent()">Delete All</button>
+        </div>
+        <h1 style="color: #2c3e50; display: flex; align-self: center">
+          <a href="index.html" style="text-decoration: none; color: inherit">
+            <button style="font-size: 2rem">Student Management</button>
+          </a>
+        </h1>
+      </div>
+      <table id="student-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>School</th>
+            <th>Age</th>
+            <th>Total Score</th>
+            <th>Mobile</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <script>
+      const baseUrl = "https://teaching-lark-included.ngrok-free.app/requests";
+      const wsUrl = "wss://teaching-lark-included.ngrok-free.app/ws";
+
+      let socket;
+
+      // Kết nối WebSocket
+      function connectWebSocket() {
+        socket = new WebSocket(wsUrl);
+
+        socket.onopen = () => {
+          console.log("WebSocket connection established");
+        };
+
+        socket.onmessage = (event) => {
+          const message = JSON.parse(event.data);
+          console.log("Message from WebSocket:", message);
+
+          if (message.message === "New webhook received") {
+            // Khi nhận được thông báo từ server, gọi hàm loadStudents để fetch dữ liệu mới
+            loadStudents();
+          }
+        };
+
+        socket.onclose = () => {
+          console.log("WebSocket connection closed. Reconnecting...");
+          setTimeout(connectWebSocket, 5000); // Tự động kết nối lại sau 5 giây
+        };
+
+        socket.onerror = (error) => {
+          console.error("WebSocket error:", error);
+        };
+      }
+
+      // Fetch danh sách sinh viên
+      async function loadStudents() {
+        try {
+          const response = await fetch(baseUrl + "/");
+          if (!response.ok) {
+            throw new Error("Failed to fetch students");
+          }
+          const students = await response.json();
+          const tableBody = document.querySelector("#student-table tbody");
+          tableBody.innerHTML = "";
+
+          for (const id in students) {
+            const student = students[id].body;
+            const row = document.createElement("tr");
+            row.innerHTML = `
+        <td>${student.id}</td>
+        <td>${student.name}</td>
+        <td>${student.school_id}</td>
+        <td>${student.age}</td>
+        <td>${student.total_score}</td>
+        <td>${student.mobile}</td>
+      `;
+            tableBody.appendChild(row);
+          }
+        } catch (error) {
+          console.error("Error loading students:", error);
+        }
+      }
+
+      // Xóa tất cả sinh viên
+      async function deleteStudent() {
+        try {
+          const response = await fetch(`${baseUrl}`, {
+            method: "DELETE",
+          });
+          if (!response.ok) {
+            throw new Error("Failed to delete student");
+          }
+          alert(`Students deleted successfully`);
+          loadStudents();
+        } catch (error) {
+          console.error("Error deleting student:", error);
+        }
+      }
+
+      // Kết nối WebSocket khi trang load
+      window.onload = () => {
+        loadStudents(); // Load danh sách sinh viên ban đầu
+        connectWebSocket(); // Kết nối WebSocket
+      };
+    </script>
+  </body>
+</html>
