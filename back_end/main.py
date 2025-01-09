@@ -1,9 +1,10 @@
-from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse, JSONResponse
 from io import BytesIO
 import pandas as pd
-from pydantic import BaseModel
-from typing import List, Dict
+from pydantic import BaseModel, ValidationError
+from typing import List, Dict, Any
+from datetime import datetime
 from fastapi.middleware.cors import CORSMiddleware
 import json
 
@@ -11,16 +12,23 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Hoặc chỉ định domain cụ thể, ví dụ: ["http://127.0.0.1:5500"]
+    allow_origins=["*"],  
     allow_credentials=True,
-    allow_methods=["*"],  # Hoặc ["GET", "POST", "PUT", "DELETE"]
-    allow_headers=["*"],  # Hoặc chỉ định cụ thể, ví dụ: ["Content-Type"]
+    allow_methods=["*"],  
+    allow_headers=["*"], 
 )
 
 
 
 employees = {}
 
+class StudentSchema(BaseModel):
+    id: int
+    age: int
+    name: str
+    mobile: str
+    school_id: Any 
+    total_score: float
 
 class Employee(BaseModel):
     emp_id: int
@@ -70,8 +78,6 @@ def search_employee(query: str):
         return {"message": "No employees found"}
     return {"employees": results}
 
-
-
 @app.get("/employees/export/excel/")
 def export_employees_to_excel():
     df = pd.DataFrame.from_records(
@@ -88,3 +94,67 @@ def export_employees_to_excel():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
         headers={"Content-Disposition": "attachment; filename=employees.xlsx"}
     )
+
+
+
+
+# phần webhook
+webhook_requests = []
+
+class WebhookRequest(BaseModel):
+    headers: dict
+    body: dict
+    timestamp: str
+# Danh sách WebSocket kết nối
+connected_clients: List[WebSocket] = []
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """Xử lý kết nối WebSocket."""
+    await websocket.accept()
+    connected_clients.append(websocket)
+    try:
+        while True:
+            # Lắng nghe tin nhắn từ client
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        connected_clients.remove(websocket)
+        print("Client disconnected")
+
+@app.post("/webhook")
+async def webhook_handler(request: Request):
+    """Xử lý khi nhận webhook từ bên thứ ba."""
+    try:
+        body = await request.json()
+        student = StudentSchema(**body)
+        headers = dict(request.headers)
+        timestamp = datetime.now().isoformat()
+
+        # Lưu vào danh sách webhook_requests
+        webhook_requests.append({
+            "headers": headers,
+            "body": student.dict(),
+            "timestamp": timestamp
+        })
+
+        # Gửi thông báo real-time tới tất cả WebSocket clients
+        for client in connected_clients:
+            await client.send_json({"message": "New webhook received", "data": student.dict()})
+
+        print("Webhook received and validated:", student)
+        return JSONResponse(content={"message": "Webhook received successfully"})
+    except ValidationError as e:
+        print("Validation error:", e.errors())
+        return JSONResponse(content={"error": e.errors()}, status_code=400)
+    except Exception as e:
+        print("Unexpected error:", str(e))
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+@app.get("/requests")
+async def get_webhook_requests():
+    return webhook_requests
+
+@app.delete("/requests")
+async def clear_webhook_requests():
+    webhook_requests.clear()
+    return JSONResponse(content={"message": "All requests cleared"})
