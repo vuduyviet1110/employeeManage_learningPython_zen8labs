@@ -1,12 +1,14 @@
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Body, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from io import BytesIO
+import xmlrpc.client
 import pandas as pd
 from pydantic import BaseModel, ValidationError
 from typing import List, Dict, Any
 from datetime import datetime
 from fastapi.middleware.cors import CORSMiddleware
 import json
+import asyncio
 
 app = FastAPI()
 
@@ -95,53 +97,168 @@ def export_employees_to_excel():
         headers={"Content-Disposition": "attachment; filename=employees.xlsx"}
     )
 
+# Login odoo
+logged_in_users = {}
 
-
-
-# phần webhook
-webhook_requests = []
-
-class WebhookRequest(BaseModel):
-    headers: dict
-    body: dict
-    timestamp: str
-# Danh sách WebSocket kết nối
-connected_clients: List[WebSocket] = []
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """Xử lý kết nối WebSocket."""
-    await websocket.accept()
-    connected_clients.append(websocket)
+@app.post("/odoo-login")
+def login(
+    username: str = Body(..., title="Username", description="The username for Odoo"),
+    password: str = Body(..., title="Password", description="The password for Odoo"),
+    db_name: str = Body(..., title="Database Name", description="The database name for Odoo")
+):
+    url = 'http://localhost:8069'
     try:
-        while True:
-            # Lắng nghe tin nhắn từ client
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        connected_clients.remove(websocket)
-        print("Client disconnected")
+        # Gọi API common để lấy UID
+        common = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/common')
+        uid = common.authenticate(db_name, username, password, {})
+        
+        if uid:
+            # Lưu thông tin người dùng đã đăng nhập
+            logged_in_users[username] = {"uid": uid, "password": password, "db_name": db_name}
+            return {"message": "Login successful", "uid": uid}
+        else:
+            raise HTTPException(status_code=401, detail="Login failed")
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/search-odoo")
+def search(
+    payload: dict = Body(...)
+):
+    username = payload.get("username")
+    url = 'http://localhost:8069'
+    if username not in logged_in_users:
+        raise HTTPException(status_code=401, detail="User not logged in")
+
+    # thông tin đăng nhập
+    user_info = logged_in_users[username]
+    uid = user_info["uid"]
+    password = user_info["password"]
+    db_name = user_info["db_name"]
+
+    try:
+        models = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+        ActiveStudentId = models.execute_kw(
+            db_name, uid, password,
+            'education.student', 'search',
+            [[
+                '|',  
+                ['state', '=', 'studying'],
+                ['state', '=', 'new']
+            ]]
+        )
+        students= models.execute_kw(
+            db_name, uid, password,
+            'education.student', 'read',
+            [ActiveStudentId],{'fields': ['id', 'name', 'school_id', 'age', 'total_score', 'mobile']}
+        )
+        
+        return {"students": students}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/search-created-student-odoo")
+def searchCreated(payload: dict = Body(...)):
+    username = payload.get("username")
+    student_id = payload.get("student_id")
+    url = 'http://localhost:8069'
+    
+    if username not in logged_in_users:
+        raise HTTPException(status_code=401, detail="User not logged in")
+
+    user_info = logged_in_users[username]
+    uid = user_info["uid"]
+    password = user_info["password"]
+    db_name = user_info["db_name"]
+
+    if not isinstance(student_id, int):
+        raise HTTPException(status_code=400, detail="Invalid student ID")
+
+    try:
+        models = xmlrpc.client.ServerProxy(f'{url}/xmlrpc/2/object')
+        ActiveStudentId = models.execute_kw(
+            db_name, uid, password,
+            'education.student', 'search',
+            [[['id', '=', student_id]]]
+        )
+
+        if not ActiveStudentId:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        students = models.execute_kw(
+            db_name, uid, password,
+            'education.student', 'read',
+            [ActiveStudentId], {'fields': ['id', 'name', 'school_id', 'age', 'total_score', 'mobile']}
+        )
+        
+        return {"students": students}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/create-odoo")
+def create(
+    username: str = Body(..., title="username", description="The username for Odoo"),
+    student_name: str = Body(..., title="student_name", description="The username for Odoo"),
+    dob: str = Body(..., title="dob", description="The student age for Odoo"),
+    mobile: str = Body(..., title="mobile", description="The student mobile for Odoo"),
+    total_score: str = Body(..., title="total_score", description="The student total score for Odoo"),
+):
+    url = 'http://localhost:8069'
+    if username not in logged_in_users:
+        raise HTTPException(status_code=401, detail="User not logged in")
+
+    print(username, student_name, dob, mobile, total_score)
+
+    student_info = {
+        "name": student_name,
+        "mobile": mobile,
+        "total_score": total_score,
+        "date_of_birth": dob,
+    }
+    # thông tin đăng nhập
+    user_info = logged_in_users[username]
+    uid = user_info["uid"]
+    password = user_info["password"]
+    db_name = user_info["db_name"]
+
+    try:
+        odoo_url = f'{url}/xmlrpc/2/object'
+        models = xmlrpc.client.ServerProxy(odoo_url)
+        new_student_id = models.execute_kw(
+            db_name, uid, password,
+            'education.student', 'create',
+            [student_info]
+        )
+        return {"id": new_student_id}
+    except xmlrpc.client.Fault as e:
+        raise HTTPException(status_code=500, detail=f"Odoo error: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+
+# WebSocket
+connected_clients: Dict[str, WebSocket] = {}
+
+event_queue = asyncio.Queue()
 @app.post("/webhook")
 async def webhook_handler(request: Request):
-    """Xử lý khi nhận webhook từ bên thứ ba."""
+    """
+    Nhận webhook từ Odoo và gửi sự kiện qua WebSocket
+    """
     try:
         body = await request.json()
         student = StudentSchema(**body)
-        headers = dict(request.headers)
         timestamp = datetime.now().isoformat()
 
-        # Lưu vào danh sách webhook_requests
-        webhook_requests.append({
-            "headers": headers,
-            "body": student.dict(),
-            "timestamp": timestamp
+        # Thêm sự kiện vào hàng đợi
+        await event_queue.put({
+            "message": "New webhook received",
+            "data": student.dict(),
+            "timestamp": timestamp,
         })
 
-        # Gửi thông báo real-time tới tất cả WebSocket clients
-        for client in connected_clients:
-            await client.send_json({"message": "New webhook received", "data": student.dict()})
-
-        print("Webhook received and validated:", student)
         return JSONResponse(content={"message": "Webhook received successfully"})
     except ValidationError as e:
         print("Validation error:", e.errors())
@@ -150,11 +267,53 @@ async def webhook_handler(request: Request):
         print("Unexpected error:", str(e))
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
+
+@app.websocket("/ws/{username}")
+async def websocket_endpoint(websocket: WebSocket, username: str):
+    """
+    Kết nối WebSocket và gửi dữ liệu real-time.
+    """
+    await websocket.accept()
+    connected_clients[username] = websocket
+    print(f"WebSocket connected: {username}")
+
+    try:
+        while True:
+            # Ping để kiểm tra kết nối (heartbeat)
+            await websocket.send_json({"type": "heartbeat", "timestamp": datetime.now().isoformat()})
+            await asyncio.sleep(10)  # Ping mỗi 10 giây
+    except WebSocketDisconnect:
+        # Xóa client khi ngắt kết nối
+        connected_clients.pop(username, None)
+        print(f"WebSocket disconnected: {username}")
+
+
+async def event_broadcaster():
+    """
+    Xử lý và gửi sự kiện từ event_queue đến các client qua WebSocket.
+    """
+    while True:
+        event = await event_queue.get()  # Lấy sự kiện từ hàng đợi
+        if connected_clients:
+            for username, websocket in connected_clients.items():
+                try:
+                    await websocket.send_json({"events": [event]})
+                except Exception as e:
+                    print(f"Error sending event to {username}: {str(e)}")
+
+        # Đánh dấu sự kiện đã xử lý
+        event_queue.task_done()
+
+
+# Khởi chạy task xử lý sự kiện
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(event_broadcaster())
+
+
 @app.get("/requests")
 async def get_webhook_requests():
-    return webhook_requests
-
-@app.delete("/requests")
-async def clear_webhook_requests():
-    webhook_requests.clear()
-    return JSONResponse(content={"message": "All requests cleared"})
+    """
+    Lấy danh sách sự kiện đã nhận (dành cho debug).
+    """
+    return {"requests": list(event_queue._queue)}
